@@ -105,7 +105,7 @@ def add_advanced_features(df):
                 df[f'{stat}_per_40'] = df[stat] * minutes_factor
     return df
 
-def generate_valid_weights(n_features, sorted_correlations, n_steps=6):
+def generate_valid_weights(n_features, sorted_correlations, n_steps=8):
     """Generate weight combinations prioritizing features with higher correlations"""
     weights_list = []
     step = 1.0 / (n_steps - 1)
@@ -173,7 +173,7 @@ def print_detailed_metrics(y_true, y_pred, model_name):
         print(f"F1-Score: {f1[i]:.3f}")
         print(f"Support: {support[i]}")
 
-def optimize_category_weights(df, category_features, target_column, n_steps=6):
+def optimize_category_weights(df, category_features, target_column, n_steps=8):
     features = category_features
     
     # Calculate correlations
