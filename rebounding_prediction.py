@@ -1,8 +1,6 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 import xgboost as xgb
 from sklearn.metrics import classification_report, accuracy_score, precision_recall_fscore_support
 import joblib
@@ -10,6 +8,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 from sklearn.metrics import confusion_matrix
+from catboost import CatBoostClassifier
+from cuml.ensemble import RandomForestClassifier as cuRF
+from cuml.preprocessing import StandardScaler as cuScaler
+import cupy as cp
+
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -17,7 +20,7 @@ def create_directories():
     """Create directory structure for results"""
     base_dir = 'basketball_analysis'
     categories = ['Playmaking', 'Shooter', 'Rebounding', 'Defense']  
-    model_types = ['rf', 'hist_gb', 'xgb']
+    model_types = ['curf', 'catboost', 'xgb']
     
     # Create base directory
     os.makedirs(base_dir, exist_ok=True)
@@ -182,19 +185,22 @@ def optimize_category_weights(df, category_features, target_column, n_steps=8):
     sorted_correlations = sorted(correlations, key=lambda x: x[1], reverse=True)
     
     results = {
-        'hist_gb': {'best_accuracy': 0, 'best_weights': None, 'best_model': None, 'best_predictions': None},
+        'catboost': {'best_accuracy': 0, 'best_weights': None, 'best_model': None, 'best_predictions': None},
         'xgb': {'best_accuracy': 0, 'best_weights': None, 'best_model': None, 'best_predictions': None},
-        'rf': {'best_accuracy': 0, 'best_weights': None, 'best_model': None, 'best_predictions': None}
+        'curf': {'best_accuracy': 0, 'best_weights': None, 'best_model': None, 'best_predictions': None}
     }
     
     weight_combinations = generate_valid_weights(len(features), sorted_correlations, n_steps)
     print(f"Testing {len(weight_combinations)} weight combinations...")
     
-    hist_gb_model = HistGradientBoostingClassifier(
-        max_iter=1000,
+    catboost_model = CatBoostClassifier(
+        iterations=1000,
         learning_rate=0.1,
         max_depth=12,
-        random_state=42
+        random_state=42,
+        task_type='GPU',
+        devices='0',
+        gpu_ram_part=0.95
     )
     
     xgb_model = xgb.XGBClassifier(
@@ -203,19 +209,22 @@ def optimize_category_weights(df, category_features, target_column, n_steps=8):
         max_depth=12,
         subsample=0.8,
         random_state=42,
+        tree_method='gpu_hist',
+        predictor='gpu_predictor',
+        gpu_id=0,
         eval_metric='mlogloss'
     )
     
-    rf_model = RandomForestClassifier(
+    curf_model = cuRF(
         n_estimators=1000,
         max_depth=12,
         random_state=42
     )
     
     models = {
-        'hist_gb': hist_gb_model,
+        'catboost': catboost_model,
         'xgb': xgb_model,
-        'rf': rf_model
+        'curf': curf_model
     }
     
     X = df[features]
@@ -391,7 +400,7 @@ def prepare_data():
     return merged_data
 
 def process_all_categories(data):
-    scaler = StandardScaler()
+    scaler = cuScaler()
     results = {}
     
     for category, features in category_features.items():
