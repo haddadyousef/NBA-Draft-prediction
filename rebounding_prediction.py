@@ -200,9 +200,7 @@ def optimize_category_weights(df, category_features, target_column, n_steps=8):
         learning_rate=0.1,
         max_depth=12,
         random_state=42,
-        task_type='GPU',
-        devices='0',
-        gpu_ram_part=0.95,
+        task_type='CPU',
     )
 
     xgb_model = xgb.XGBClassifier(
