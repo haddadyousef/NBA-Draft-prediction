@@ -203,7 +203,6 @@ def optimize_category_weights(df, category_features, target_column, n_steps=8):
         task_type='GPU',
         devices='0',
         gpu_ram_part=0.95,
-        platform_capabilities=['AMD']
     )
 
     xgb_model = xgb.XGBClassifier(
