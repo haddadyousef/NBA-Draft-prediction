@@ -9,18 +9,20 @@ import seaborn as sns
 import os
 from sklearn.metrics import confusion_matrix
 from catboost import CatBoostClassifier
-from cuml.ensemble import RandomForestClassifier as cuRF
-from cuml.preprocessing import StandardScaler as cuScaler
-import cupy as cp
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+import lightgbm as lgb
 
 import warnings
 warnings.filterwarnings('ignore')
 
+os.environ['ROCR_VISIBLE_DEVICES'] = "0"
+os.environ['HSA_OVERRIDE_GFX_VERSION'] = '10.3.0'
+
 def create_directories():
-    """Create directory structure for results"""
     base_dir = 'basketball_analysis'
     categories = ['Playmaking', 'Shooter', 'Rebounding', 'Defense']  
-    model_types = ['curf', 'catboost', 'xgb']
+    model_types = ['lgb', 'catboost', 'xgb']  # Changed from 'curf' to 'lgb'
     
     # Create base directory
     os.makedirs(base_dir, exist_ok=True)
@@ -200,9 +202,10 @@ def optimize_category_weights(df, category_features, target_column, n_steps=8):
         random_state=42,
         task_type='GPU',
         devices='0',
-        gpu_ram_part=0.95
+        gpu_ram_part=0.95,
+        platform_capabilities=['AMD']
     )
-    
+
     xgb_model = xgb.XGBClassifier(
         n_estimators=1000,
         learning_rate=0.05,
@@ -212,19 +215,24 @@ def optimize_category_weights(df, category_features, target_column, n_steps=8):
         tree_method='gpu_hist',
         predictor='gpu_predictor',
         gpu_id=0,
-        eval_metric='mlogloss'
+        eval_metric='mlogloss',
+        device='rocm'
     )
-    
-    curf_model = cuRF(
+
+    lgb_model = lgb.LGBMClassifier(
         n_estimators=1000,
+        learning_rate=0.05,
         max_depth=12,
-        random_state=42
+        random_state=42,
+        device='gpu',
+        gpu_platform_id=0,
+        gpu_device_id=0
     )
-    
+
     models = {
         'catboost': catboost_model,
         'xgb': xgb_model,
-        'curf': curf_model
+        'lgb': lgb_model  # Changed from 'curf' to 'lgb'
     }
     
     X = df[features]
@@ -400,7 +408,7 @@ def prepare_data():
     return merged_data
 
 def process_all_categories(data):
-    scaler = cuScaler()
+    scaler = StandardScaler()
     results = {}
     
     for category, features in category_features.items():
@@ -409,31 +417,12 @@ def process_all_categories(data):
         
         # Standardize features
         data_scaled = data.copy()
-        data_scaled[features] = scaler.fit_transform(data[features])
+        data_scaled[features] = scaler.fit_transform(data[features].values)
         
         # Train models
         category_results = train_category_model(category, features, data_scaled)
         results[category] = category_results
         
-        # Save best model and metadata
-        best_model_type = max(category_results.items(), 
-                            key=lambda x: x[1]['best_accuracy'])[0]
-        best_result = category_results[best_model_type]
-        
-        # Save model and metadata
-        model_data = {
-            'model': best_result['best_model'],
-            'weights': dict(zip(features, best_result['best_weights'])),
-            'accuracy': best_result['best_accuracy'],
-            'scaler': scaler,
-            'features': features
-        }
-        
-        model_filename = f'{category.lower()}_best_model.joblib'
-        joblib.dump(model_data, model_filename)
-        print(f"\nModel saved as {model_filename}")
-    
-    return results
 def print_final_summary(all_results):
     print("\nFinal Results Summary")
     print("=" * 80)
