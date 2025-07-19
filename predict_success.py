@@ -24,17 +24,19 @@ os.makedirs(STAT_TEST_FOLDER, exist_ok=True)
 
 
 category_features = { 
+    'Rebounding': [
+        'TRB', 'TRB_per_40', 'TRB%',
+        'Games', 'Minutes_Per_Game',
+        'DWS', 'WS', 'WS/40'
+    ],
+
     'Playmaking': [
         'AST', 'AST_per_40', 'AST%',
         'TOV', 'TOV%', 'USG%',
         'OWS', 'WS', 'WS/40'
     ],
 
-    'Rebounding': [
-        'TRB', 'TRB_per_40', 'TRB%',
-        'Games', 'Minutes_Per_Game',
-        'DWS', 'WS', 'WS/40'
-    ],
+
 
     'Defense': [
         'STL', 'STL_per_40', 'STL%',
@@ -48,6 +50,8 @@ category_features = {
         'FT', 'FTA', 'FT%',
         'TS%', 'eFG%', 'OWS'
     ]
+
+
 
 
 
@@ -112,9 +116,9 @@ def save_skill_statistical_tables(
 ):
     os.makedirs(output_folder, exist_ok=True)
     
-    skills = ["Defense", "Rebounding", "Shooter", "Playmaking"]
+    skills = ["Rebounding", "Shooter", "Playmaking"]
     pretty_names = {
-        "Defense": "Defense Statistical Analysis",
+        "Scorer": "Scorer Statistical Analysis",
         "Rebounding": "Rebounding Statistical Analysis",
         "Shooter": "Shooting Statistical Analysis",
         "Playmaking": "Playmaking Statistical Analysis"
@@ -201,9 +205,8 @@ def save_overall_statistical_summary_table(
         output_path='output_files_binary/statistical_tests/overall_statistical_summary_table.png'
     ):
     # Skills and labels
-    skills = ["Defense", "Rebounding", "Shooter", "Playmaking"]
+    skills = ["Rebounding", "Shooter", "Playmaking"]
     pretty_names = {
-        "Defense": "Defense",
         "Rebounding": "Rebounding",
         "Shooter": "Shooting",
         "Playmaking": "Playmaking"
@@ -309,9 +312,8 @@ def save_overall_statistical_summary_table(
 
 def save_overall_statistical_summary(feat_results, output_path='output_files_binary/statistical_tests/overall_statistical_summary.png'):
     # Prepare skill order and pretty names
-    skills = ["Defense", "Rebounding", "Shooter", "Playmaking"]
+    skills = ["Rebounding", "Shooter", "Playmaking"]
     pretty_names = {
-        "Defense": "Defense Statistical Analysis",
         "Rebounding": "Rebounding Statistical Analysis",
         "Shooter": "Shooter Statistical Analysis",
         "Playmaking": "Playmaking Statistical Analysis"
@@ -504,7 +506,7 @@ def add_clustering_features(df, n_clusters=5, random_state=42):
     return result, cluster_descriptions
 
 def run_and_save_stat_tests(df, cluster_descriptions, category_features, engineered_feats):
-    categories = ['Playmaking', 'Rebounding', 'Defense', 'Shooter']
+    categories = ['Rebounding', 'Shooter', 'Playmaking']
     n_clusters = len(cluster_descriptions)
     feature_results = {}
     binary_features_by_skill = {}
@@ -928,9 +930,6 @@ def train_category_model(category_name, features, data, cluster_descriptions):
     X = data[all_features]
     y = data[target_col]
     
-    smote = SMOTE(random_state=42)
-    X_resampled, y_resampled = smote.fit_resample(X, y)
-    
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     
     # Track best model results (per model name)
@@ -938,12 +937,22 @@ def train_category_model(category_name, features, data, cluster_descriptions):
     best_fold_accuracies = {}
     best_fold_extras = {}
     
-    for train_index, test_index in skf.split(X_resampled, y_resampled):
-        X_train, X_test = X_resampled.iloc[train_index], X_resampled.iloc[test_index]
-        y_train, y_test = y_resampled.iloc[train_index], y_resampled.iloc[test_index]
+    for train_index, test_index in skf.split(X, y):
+        # ----- Split -----
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+        
+        # ----- Fit scaler only on training data -----
+        scaler = StandardScaler()
+        X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
+        X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=X_test.columns, index=X_test.index)
+        
+        # ----- SMOTE only on training data -----
+        smote = SMOTE(random_state=42)
+        X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
         
         # Get results for this fold
-        model_results = train_and_evaluate_models(X_train, X_test, y_train, y_test, category_name)
+        model_results = train_and_evaluate_models(X_train_res, X_test_scaled, y_train_res, y_test, category_name)
         
         # Track best results for each model type
         for model_name, result in model_results.items():
@@ -1031,6 +1040,13 @@ def prepare_data():
             labels=['Bottom 25%', 'Middle 50%', 'Top 25%'],
             duplicates='drop'
         ).cat.codes
+    # After the aspects loop in prepare_data(), add:
+    merged_data['Scorer_Category'] = pd.qcut(
+        merged_data['Scorer_Score'], 
+        q=[0, 0.25, 0.75, 1], 
+        labels=['Bottom 25%', 'Middle 50%', 'Top 25%'],
+        duplicates='drop'
+    ).cat.codes
     
     print("\nData Shape:", merged_data.shape)
     print("\nChecking for remaining NaN values:")
@@ -1043,7 +1059,7 @@ def analyze_cluster_predictions(data, cluster_descriptions):
     print("\nAnalyzing Cluster Developmental Patterns")
     print("=" * 80)
     
-    categories = ['Playmaking', 'Rebounding', 'Defense', 'Shooter']
+    categories = ['Rebounding', 'Shooter', 'Playmaking']
     n_clusters = len(cluster_descriptions)
     
     success_rates = pd.DataFrame(index=range(n_clusters), columns=categories)
@@ -1164,7 +1180,8 @@ if __name__ == "__main__":
             'Playmaking': ['AST_to_TOV', 'Playmaking_Impact', 'Ball_Control'],
             'Rebounding': ['Rebound_per_Minute', 'Rebound_Efficiency', 'Impact_Rebounding'],
             'Defense': ['Stocks', 'Stocks_per_40', 'Defense_Impact', 'STL_BLK_Interaction', 'STL_BLK_Impact'],
-            'Shooter': ['Three_Point_Rate', 'Shot_Selection', 'Pure_Shooting']
+            'Shooter': ['Three_Point_Rate', 'Shot_Selection', 'Pure_Shooting'],
+            'Scorer': ['Three_Point_Rate', 'Shot_Selection', 'Pure_Shooting']
         }
 
         merged_data, feat_results, binary_features_by_skill = run_and_save_stat_tests(
