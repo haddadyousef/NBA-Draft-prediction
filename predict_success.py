@@ -4,21 +4,32 @@ from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKF
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier, StackingClassifier, VotingClassifier
 from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
+from sklearn.metrics import confusion_matrix
+from sklearn.utils.class_weight import compute_class_weight
+from sdv.single_table import CTGANSynthesizer
+from sdv.single_table import TVAESynthesizer
+from sdv.metadata import SingleTableMetadata
+from sklearn.neighbors import NearestNeighbors
+import umap
+from skimage.draw import disk
 from sklearn.decomposition import PCA
 import xgboost as xgb
 from sklearn.metrics import classification_report, accuracy_score, precision_recall_fscore_support
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
+from tensorflow.keras import layers, models, utils
 import warnings
 warnings.filterwarnings('ignore')
 from sklearn.linear_model import LogisticRegression
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import mutual_info_classif
+from tensorflow.keras.callbacks import EarlyStopping
 import os
 
 # Define a global output folder
-OUTPUT_FOLDER = 'output_files_binary'
+OUTPUT_FOLDER = 'final_run_results_mid_age_smote'
 STAT_TEST_FOLDER = os.path.join(OUTPUT_FOLDER, 'statistical_tests')
 os.makedirs(STAT_TEST_FOLDER, exist_ok=True)
 
@@ -366,6 +377,8 @@ def add_clustering_features(df, n_clusters=5, random_state=42):
 
     # Define clustering features strictly from college stats
     cluster_features = [
+        'PPG',
+        'DWS',
         'AST',   # Playmaking
         'BLK',   # Rim protection
         '3P%',   # Shooting
@@ -373,7 +386,9 @@ def add_clustering_features(df, n_clusters=5, random_state=42):
         'TOV',   # Ball security
         'FT%',   # Free throw shooting
         'USG%',  # Usage
-        'STL',   # Steals (perimeter defense)
+        'STL',  
+        'FTA', 
+        'WS' # Steals (perimeter defense)
     ]
 
     # Use only features present in the dataframe
@@ -770,7 +785,7 @@ def save_results(category, model_name, y_true, y_pred, feature_importances, accu
         # Also save the raw data
         feat_imp.to_csv(os.path.join(folder_path, 'feature_importances.csv'), index=False)
 
-def train_and_evaluate_models(X_train, X_test, y_train, y_test, category):
+def train_and_evaluate_models(X_train, X_test, y_train, y_test, category, class_weight_dict):
     """Train and evaluate models with voting ensemble"""
     # Define the base models with hyperparameter tuning
     param_grid = {
@@ -794,17 +809,23 @@ def train_and_evaluate_models(X_train, X_test, y_train, y_test, category):
     base_models = [
         ('hist_gb', HistGradientBoostingClassifier(random_state=42)),
         ('xgb', xgb.XGBClassifier(random_state=42, eval_metric='mlogloss')),
-        ('rf', RandomForestClassifier(random_state=42))
+        ('rf', RandomForestClassifier(class_weight=class_weight_dict, random_state=42))
     ]
     
     results = {}
     
     for model_name, model in base_models:
         print(f"\nTraining {model_name.upper()} model...")
-        
-        # Perform hyperparameter tuning
-        grid_search = GridSearchCV(model, param_grid[model_name], cv=3, n_jobs=-1, scoring='accuracy')
-        grid_search.fit(X_train, y_train)
+
+        # Precompute sample weights for this fold
+        sample_weights = y_train.map(class_weight_dict) if hasattr(y_train, 'map') else np.array([class_weight_dict[yy] for yy in y_train])
+
+        if model_name in ['hist_gb', 'xgb']:
+            grid_search = GridSearchCV(model, param_grid[model_name], cv=3, n_jobs=-1, scoring='accuracy')
+            grid_search.fit(X_train, y_train, sample_weight=sample_weights)
+        else:
+            grid_search = GridSearchCV(model, param_grid[model_name], cv=3, n_jobs=-1, scoring='accuracy')
+            grid_search.fit(X_train, y_train)
         best_model = grid_search.best_estimator_
         
         # Make predictions
@@ -947,12 +968,32 @@ def train_category_model(category_name, features, data, cluster_descriptions):
         X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
         X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=X_test.columns, index=X_test.index)
         
-        # ----- SMOTE only on training data -----
+        # ----- Targeted synthetic augmentation via hardness -----
+        hardness_scores = compute_knn_shapley_scores(X_train_scaled.values, y_train.values, K=5)
+        X_train_res, y_train_res = targeted_synthetic_augmentation(
+            X_train_scaled.values, y_train.values, hardness_scores,
+            tau=0.1,  # augment 10% hardest, can tune
+            synth_multiplier=2.0,  # 1x synthetic data for hard points
+            method='tvae',  # or 'ctgan'
+            random_state=42
+        )
+        # Convert back to DataFrame for downstream code
+        X_train_res = pd.DataFrame(X_train_res, columns=X_train_scaled.columns)
+        y_train_res = pd.Series(y_train_res)
+
+        from sklearn.utils.class_weight import compute_class_weight
+        classes = np.unique(y_train_res)
+        class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train_res)
+        class_weight_dict = dict(zip(classes, class_weights))
+        # Manually boost the Top 25% class weight (class 2)
+        class_weight_dict[2] = class_weight_dict[2] * 1.5
+        class_weight_dict[0] = class_weight_dict[0] * 1.25    # Increase by 50%
+
         smote = SMOTE(random_state=42)
-        X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
+        X_train_res, y_train_res = smote.fit_resample(X_train_res, y_train_res)
         
         # Get results for this fold
-        model_results = train_and_evaluate_models(X_train_res, X_test_scaled, y_train_res, y_test, category_name)
+        model_results = train_and_evaluate_models(X_train_res, X_test_scaled, y_train_res, y_test, category_name, class_weight_dict)
         
         # Track best results for each model type
         for model_name, result in model_results.items():
@@ -1021,17 +1062,23 @@ def prepare_data():
     college_stats = pd.read_csv('college_stats_final.csv')
     
     college_stats = college_stats.fillna(0)
-    
+
+    # --- Add: One-hot encode LastConf, keep YearsPlayed as numeric ---
+    if 'LastConf' in college_stats.columns:
+        conf_dummies = pd.get_dummies(college_stats['LastConf'], prefix='Conf')
+        college_stats = pd.concat([college_stats, conf_dummies], axis=1)
+    else:
+        print("Warning: 'LastConf' column not found in college_stats_final.csv")
+        conf_dummies = pd.DataFrame()
+
     college_stats = add_advanced_features(college_stats)
-    
     college_stats = engineer_features(college_stats)
     
     merged_data = pd.merge(college_stats, nba_data, on='Player', how='inner')
-    
     merged_data = merged_data.fillna(0)
-    
+
     merged_data, cluster_descriptions = add_clustering_features(merged_data, n_clusters=5)
-    
+
     aspects = ['Playmaking', 'Rebounding', 'Defense', 'Shooter']
     for aspect in aspects:
         merged_data[f'{aspect}_Category'] = pd.qcut(
@@ -1040,20 +1087,21 @@ def prepare_data():
             labels=['Bottom 25%', 'Middle 50%', 'Top 25%'],
             duplicates='drop'
         ).cat.codes
-    # After the aspects loop in prepare_data(), add:
     merged_data['Scorer_Category'] = pd.qcut(
         merged_data['Scorer_Score'], 
         q=[0, 0.25, 0.75, 1], 
         labels=['Bottom 25%', 'Middle 50%', 'Top 25%'],
         duplicates='drop'
     ).cat.codes
-    
+
     print("\nData Shape:", merged_data.shape)
     print("\nChecking for remaining NaN values:")
     null_counts = merged_data.isnull().sum()
     print(null_counts[null_counts > 0])
     
-    return merged_data, cluster_descriptions
+    # --- Add: save the list of conference dummy columns for later use ---
+    conf_cols = [col for col in merged_data.columns if col.startswith('Conf_')]
+    return merged_data, cluster_descriptions, conf_cols
 
 def analyze_cluster_predictions(data, cluster_descriptions):
     print("\nAnalyzing Cluster Developmental Patterns")
@@ -1107,6 +1155,80 @@ def analyze_cluster_predictions(data, cluster_descriptions):
         print(f"  Best category: {best_category} ({best_rate:.1f}% reach top 25%)")
         
     return success_rates
+
+def row_to_image(row, feature_map, img_size=16):
+    """Convert a 1D feature vector into a 2D image using a feature_map."""
+    img = np.zeros((img_size, img_size), dtype=np.float32)
+    for i, val in enumerate(row):
+        x, y = feature_map[i]
+        img[x, y] = val
+    return img
+
+def create_feature_map(features, method='umap', img_size=32, random_state=42):
+    """Generate a pixel location for each feature using UMAP or t-SNE."""
+    n_features = len(features)
+    # Fake data: each feature as a one-hot row
+    X = np.eye(n_features)
+    
+    if method == 'tsne':
+        perplexity = max(2, min(5, n_features // 2))
+        reducer = TSNE(n_components=2, random_state=random_state, perplexity=perplexity)
+
+    else:
+        reducer = umap.UMAP(n_components=2, random_state=random_state)
+    coords = reducer.fit_transform(X)
+    
+    # Normalize coordinates to [0, img_size-1]
+    coords -= coords.min(axis=0)
+    coords /= coords.max(axis=0)
+    coords *= (img_size - 1)
+    coords = np.round(coords).astype(int)
+    # Remove duplicates by jittering
+    for i in range(len(coords)):
+        while tuple(coords[i]) in [tuple(c) for j, c in enumerate(coords) if j < i]:
+            coords[i] += np.random.randint(-1, 2, size=2)
+            coords[i] = np.clip(coords[i], 0, img_size-1)
+    return coords
+
+def tabular_to_images(df, features, method='umap', img_size=32):
+    feature_map = create_feature_map(features, method=method, img_size=img_size)
+    images = []
+    for idx, row in df[features].iterrows():
+        img = row_to_image(row.values, feature_map, img_size=img_size)
+        images.append(img)
+    images = np.stack(images)
+    return images, feature_map
+
+def train_cnn(images, labels, num_classes, epochs=20):
+    images = images[..., np.newaxis]
+    labels_cat = utils.to_categorical(labels, num_classes)
+    
+    # Compute class weights
+    class_weights = compute_class_weight('balanced', classes=np.unique(labels), y=labels)
+    class_weight_dict = dict(enumerate(class_weights))
+    
+    model = models.Sequential([
+        layers.Conv2D(32, (3,3), activation='relu', input_shape=images.shape[1:]),
+        layers.MaxPooling2D(2),
+        layers.Conv2D(64, (3,3), activation='relu'),
+        # REMOVE the second MaxPooling2D
+        layers.Flatten(),
+        layers.Dense(64, activation='relu'),
+        layers.Dropout(0.25),
+        layers.Dense(num_classes, activation='softmax')
+    ])
+    es = EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True)
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    model.fit(
+    images, labels_cat,
+    epochs=80,
+    batch_size=32,
+    validation_split=0.2,
+    class_weight=class_weight_dict,
+    callbacks=[es]
+    )
+
+    return model
 
 def process_all_categories(data, cluster_descriptions, binary_features_by_skill):
     scaler = StandardScaler()
@@ -1166,13 +1288,208 @@ def print_final_summary(all_results):
         best_model = max(results.items(), key=lambda x: x[1]['accuracy'])
         print(f"\nBest Model: {best_model[0]} ({best_model[1]['accuracy']:.3f})")
 
+def compute_knn_shapley_scores(X, y, K=5):
+    # KNN distances for each sample with respect to the rest of the training data
+    nbrs = NearestNeighbors(n_neighbors=K+1, algorithm='auto').fit(X)
+    distances, indices = nbrs.kneighbors(X)
+    # Remove self-neighbor (distance=0)
+    indices = indices[:, 1:]
+    # For each point, how many of its neighbors have different label?
+    hardness = []
+    for i, neighbors in enumerate(indices):
+        neighbor_labels = y[neighbors]
+        diff = np.sum(neighbor_labels != y[i])
+        hardness.append(diff / K)
+    return np.array(hardness)
+
+def targeted_synthetic_augmentation(X, y, hardness_scores, tau=0.1, synth_multiplier=1.0, method='tvae', random_state=42):
+    # Select the hardest tau% of samples
+    n_hard = int(len(X) * tau)
+    hard_indices = np.argsort(hardness_scores)[-n_hard:]  # Select hardest
+    X_hard = X[hard_indices]
+    y_hard = y[hard_indices]
+    # Prepare DataFrame for SDV
+    df_hard = pd.DataFrame(X_hard, columns=[f'f{i}' for i in range(X_hard.shape[1])])
+    df_hard['label'] = y_hard
+    n_synth = int(n_hard * synth_multiplier)
+    metadata = SingleTableMetadata()
+    metadata.detect_from_dataframe(data=df_hard)
+    # Train generator
+    if method == 'ctgan':
+        generator = CTGANSynthesizer(metadata, epochs=300)
+    else:
+        generator = TVAESynthesizer(metadata, epochs=300)
+    generator.fit(df_hard)
+    synth = generator.sample(n_synth)
+    # Concatenate synthetic data with original training data
+    X_aug = np.vstack([X, synth.drop('label', axis=1).values])
+    y_aug = np.concatenate([y, synth['label'].values])
+    return X_aug, y_aug
+
 if __name__ == "__main__":
     print("Starting basketball player analysis with clustering and early statistical tests...")
     print("=" * 80)
     
+    
     try:
+        merged_data, cluster_descriptions, conf_cols = prepare_data()
+
+        # Add 'YearsPlayed' and conference dummies to every skill's features
+        for cat in category_features:
+            if 'YearsPlayed' not in category_features[cat]:
+                category_features[cat].append('YearsPlayed')
+            for conf_col in conf_cols:
+                if conf_col not in category_features[cat]:
+                    category_features[cat].append(conf_col)
+
+                    # DEEPINSIGHT / MREP-DEEPINSIGHT: CNN ON TABULAR-TO-IMAGE (READY TO RUN BLOCK)
+        ################################################################################
+        print("\n" + "="*80)
+        print("DEEPINSIGHT/MREP-DEEPINSIGHT CNN EXPERIMENTS (Shooter skill example)")
+        print("="*80)
+
+        # --- 1. Choose skill/category to run DeepInsight on ---
+        category = "Shooter"
+        features = category_features[category]
+        labels = merged_data[f'{category}_Category'].values
+        num_classes = 3
+        img_size = 12
+
+        scaler = StandardScaler()
+        merged_data[features] = scaler.fit_transform(merged_data[features])
+        # --- 2. Create Images for Each Representation ---
+        print("\nCreating tabular-to-image representations...")
+        imgs_umap, fmap_umap = tabular_to_images(merged_data, features, method='umap', img_size=img_size)
+        imgs_tsne, fmap_tsne = tabular_to_images(merged_data, features, method='tsne', img_size=img_size)
+
+        # --- 3. Train/Test Split (Same split for both representations for fair comparison) ---
+        split_random_state = 42
+        X_tabular = merged_data[features].values
+        y_tabular = labels
+
+        X_train_tab, X_test_tab, y_train, y_test = train_test_split(
+            X_tabular, y_tabular, test_size=0.2, random_state=split_random_state, stratify=y_tabular
+        )
+
+        # Compute KNN-Shapley hardness on training data only
+        hardness_scores = compute_knn_shapley_scores(X_train_tab, y_train, K=5)
+        X_train_tab_aug, y_train_aug = targeted_synthetic_augmentation(
+            X_train_tab,
+            y_train,
+            hardness_scores,
+            tau=0.1,  # augment 10% hardest
+            synth_multiplier=1.0,  # 1x synthetic data for hard points
+            method='tvae',  # or 'ctgan'
+            random_state=42
+        )
+        print("Original training class distribution:", np.bincount(y_train))
+        print("After targeted synthetic augmentation:", np.bincount(y_train_aug))
+
+        # Convert augmented training data and test data to images
+        X_train_df_aug = pd.DataFrame(X_train_tab_aug, columns=features)
+        X_test_df = pd.DataFrame(X_test_tab, columns=features)
+
+        imgs_train_umap, fmap_umap = tabular_to_images(X_train_df_aug, features, method='umap', img_size=img_size)
+        imgs_test_umap, _ = tabular_to_images(X_test_df, features, method='umap', img_size=img_size)
+
+        imgs_train_tsne, fmap_tsne = tabular_to_images(X_train_df_aug, features, method='tsne', img_size=img_size)
+        imgs_test_tsne, _ = tabular_to_images(X_test_df, features, method='tsne', img_size=img_size)
+
+        # --- 4. Train CNNs on Both Representations ---
+        print("\nTraining CNN on UMAP images...")
+        cnn_model_umap = train_cnn(imgs_train_umap, y_train_aug, num_classes, epochs=80)
+        print("\nTraining CNN on t-SNE images...")
+        cnn_model_tsne = train_cnn(imgs_train_tsne, y_train_aug, num_classes, epochs=80)
+
+
+
+
+        # --- 5. Predict on Test Set ---
+        print("\nPredicting (UMAP)...")
+        probs_umap = cnn_model_umap.predict(imgs_test_umap)
+        print("Predicting (t-SNE)...")
+        probs_tsne = cnn_model_tsne.predict(imgs_test_tsne)
+
+        # --- 6. Ensemble (MRep-DeepInsight): Average the Softmax Probabilities ---
+        probs_ensemble = (probs_umap + probs_tsne) / 2.0
+        y_pred_umap = np.argmax(probs_umap, axis=1)
+        y_pred_tsne = np.argmax(probs_tsne, axis=1)
+        y_pred_ensemble = np.argmax(probs_ensemble, axis=1)
+
+        # --- 7. Print Classification Reports ---
+
+
+
+        print("\nCNN (UMAP) Results:")
+        print(classification_report(y_test, y_pred_umap, target_names=['Bottom 25%', 'Middle 50%', 'Top 25%']))
+        print("Confusion matrix:\n", confusion_matrix(y_test, y_pred_umap))
+
+        print("\nCNN (t-SNE) Results:")
+        print(classification_report(y_test, y_pred_tsne, target_names=['Bottom 25%', 'Middle 50%', 'Top 25%']))
+        print("Confusion matrix:\n", confusion_matrix(y_test, y_pred_tsne))
+
+        print("\nMRep-DeepInsight CNN (UMAP + t-SNE ensemble) Results:")
+        print(classification_report(y_test, y_pred_ensemble, target_names=['Bottom 25%', 'Middle 50%', 'Top 25%']))
+        print("Confusion matrix:\n", confusion_matrix(y_test, y_pred_ensemble))
+
+        # --- 8. Save Reports as PNG ---
+        def save_cnn_report(report, cm, filename_prefix):
+            # Save classification report as image
+            df = pd.DataFrame(report).transpose().round(3)
+            plt.figure(figsize=(8, 4))
+            ax = plt.subplot(111, frame_on=False)
+            ax.xaxis.set_visible(False)
+            ax.yaxis.set_visible(False)
+            table = plt.table(
+                cellText=df.values,
+                rowLabels=df.index,
+                colLabels=df.columns,
+                cellLoc='center',
+                loc='center'
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(10)
+            table.scale(1.2, 1.2)
+            plt.title(filename_prefix + " Classification Report")
+            plt.tight_layout()
+            plt.savefig(f"{filename_prefix}_classification_report.png", dpi=220, bbox_inches='tight')
+            plt.close()
+
+            # Save confusion matrix as image
+            plt.figure(figsize=(5, 4))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                        xticklabels=['Bottom 25%', 'Middle 50%', 'Top 25%'],
+                        yticklabels=['Bottom 25%', 'Middle 50%', 'Top 25%'])
+            plt.xlabel('Predicted')
+            plt.ylabel('Actual')
+            plt.title(filename_prefix + " Confusion Matrix")
+            plt.tight_layout()
+            plt.savefig(f"{filename_prefix}_confusion_matrix.png", dpi=220, bbox_inches='tight')
+            plt.close()
+
+        save_cnn_report(
+            classification_report(y_test, y_pred_umap, target_names=['Bottom 25%', 'Middle 50%', 'Top 25%'], output_dict=True),
+            confusion_matrix(y_test, y_pred_umap),
+            f"{OUTPUT_FOLDER}/deepinsight_cnn_umap"
+        )
+        save_cnn_report(
+            classification_report(y_test, y_pred_tsne, target_names=['Bottom 25%', 'Middle 50%', 'Top 25%'], output_dict=True),
+            confusion_matrix(y_test, y_pred_tsne),
+            f"{OUTPUT_FOLDER}/deepinsight_cnn_tsne"
+        )
+        save_cnn_report(
+            classification_report(y_test, y_pred_ensemble, target_names=['Bottom 25%', 'Middle 50%', 'Top 25%'], output_dict=True),
+            confusion_matrix(y_test, y_pred_ensemble),
+            f"{OUTPUT_FOLDER}/deepinsight_cnn_ensemble"
+        )
+
+        print("\nDeepInsight/MRep-DeepInsight CNN results and reports saved in output_files_binary/")
+        ################################################################################
+        # END OF BLOCK
+        ################################################################################    
+
         # 1. Prepare raw data
-        merged_data, cluster_descriptions = prepare_data()
+        #merged_data, cluster_descriptions = prepare_data()
         
         # 2. Run and save all statistical tests (correlations, ANOVA, info gain, chi-square)
         #    This will add binary features for each category as needed
@@ -1213,8 +1530,15 @@ if __name__ == "__main__":
                 print(f"{feature}: {gain:.3f}")
         
         print("\nAnalysis complete!")
+
+
+
+    
         
     except Exception as e:
         import traceback
         print(f"Error during analysis: {str(e)}")
         traceback.print_exc()
+
+        ################################################################################
+
