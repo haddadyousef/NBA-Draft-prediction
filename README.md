@@ -1,7 +1,9 @@
 NCAA-to-NBA Player Projection
+
 This project analyzes how NCAA player performance translates into NBA outcomes. The workflow combines feature engineering, clustering, and synthetic data augmentation to train ensemble machine learning models that predict whether players will land in the Top 25%, Middle 50%, or Bottom 25% of NBA performance outcomes.
 
-Repository Structure
+Repository Structure:
+
 NBA-Draft-prediction/
    README.md – Project description and usage instructions
    requirements.txt – Python dependencies
@@ -17,12 +19,11 @@ NBA-Draft-prediction/
    new_methods_predictions/...
    accuracy_summary_barplot.png
 
-Note: Large datasets should not be committed directly to GitHub (files larger than 50MB). If needed, include smaller sample CSVs or provide a link to the full datasets.
 
 Setup
 Clone the repository and install the dependencies:
 
-git clone https://github.com/haddadyousef/NBA-Draft-prediction
+> git clone https://github.com/haddadyousef/NBA-Draft-prediction
 cd NBA-Draft-prediction
 pip install -r requirements.txt
 
@@ -63,30 +64,37 @@ Save Skill Translation Index (STI) probabilities
 Produce summary barplots of model accuracies
 All outputs are written to the results folder.
 
-Outputs
-The script generates the following:
+Outputs:
+
 
 Cluster analyses
 
-cluster_elbow_method.png: optimal number of clusters
-
-player_clusters.png: NCAA archetype visualization with PCA
+   cluster_elbow_method.png: optimal number of clusters
+   
+   player_clusters.png: NCAA archetype visualization with PCA
 
 Statistical tests
 
-CSVs and barplots for correlations, ANOVA, information gain, chi-square
-Statistical summary tables per skill
+   CSVs and barplots for correlations, ANOVA, information gain, chi-square
+   Statistical summary tables per skill
+
 Model evaluation
 
-Confusion matrices (PNG)
-Classification reports (PNG and JSON)
-Feature importance plots and CSV tables
-STI probabilities CSVs
-Overall results
+   Confusion matrices (PNG)
+   Classification reports (PNG and JSON)
+   Feature importance plots and CSV tables
+   STI probabilities CSVs
+   Overall results
+   
+   accuracy_summary_barplot.png: grouped bar chart comparing model accuracies
 
-accuracy_summary_barplot.png: grouped bar chart comparing model accuracies
+
 Key Findings
-NCAA archetype clusters reveal meaningful developmental patterns such as “high DWS / high WS” defenders or “high AST / high STL / high TOV” playmakers.
-Certain clusters, such as strong rebounders or defenders, translate into NBA Top 25% success more frequently.
-Synthetic augmentation helps address class imbalance and improve predictions for rare Top 25% outcomes.
-Voting ensembles consistently outperform single models across skill categories.
+
+   NCAA archetype clusters reveal meaningful developmental patterns such as “high DWS / high WS” defenders or “high AST / high STL / high TOV” playmakers.
+   
+   Certain clusters, such as strong rebounders or defenders, translate into NBA Top 25% success more frequently.
+   
+   Synthetic augmentation helps address class imbalance and improve predictions for rare Top 25% outcomes.
+   
+   Voting ensembles consistently outperform single models across skill categories.
