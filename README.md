@@ -24,44 +24,63 @@ Setup
 Clone the repository and install the dependencies:
 
 > git clone https://github.com/haddadyousef/NBA-Draft-prediction
+
 cd NBA-Draft-prediction
+
 pip install -r requirements.txt
 
 Python version: 3.12 or later
+
 Core libraries installed in requirements.txt: scikit-learn, tensorflow, torch, torch-geometric, sdv, xgboost, umap-learn, seaborn, matplotlib
 
 Running the Pipeline
+
 To execute the full workflow, run:
 
 python src/predict_success.py
 
 The pipeline performs the following steps:
 
-Data preparation
+Data preparation:
 
-Load and merge NCAA and NBA datasets
-Apply feature engineering (per-40 stats, ratios, interaction effects)
-Add YearsPlayed and conference dummy variables
-Player clustering
+-Loads and merges NCAA and NBA datasets
 
-Perform PCA + KMeans clustering on NCAA features
-Generate cluster visualizations and elbow method plots
-Statistical analysis
+-Applies feature engineering (per-40 stats, ratios, interaction effects)
 
-Run correlation, ANOVA, information gain, and chi-square tests
-Save results as CSVs and annotated plots under results/statistical_tests
-Model training per skill category
+-Adds YearsPlayed and conference dummy variables
+
+-Player clustering
+
+P-erforms PCA + KMeans clustering on NCAA features
+
+-Generates cluster visualizations and elbow method plots
+
+Statistical analysis:
+
+-Runs correlation, ANOVA, information gain, and chi-square tests
+
+-Saves results as CSVs and annotated plots inside statistical_tests folder
+
 
 Skills: Rebounding, Shooting, Playmaking, Defense
-Models: Random Forest, HistGradientBoosting, XGBoost, and a Voting Ensemble
-Uses stratified 5-fold cross-validation
-Includes SMOTE oversampling and synthetic generation with TVAE/CTGAN
-Adds fold-specific cluster features
-Evaluation
 
-Save confusion matrices, classification reports, and feature importances
-Save Skill Translation Index (STI) probabilities
-Produce summary barplots of model accuracies
+Models: Random Forest, HistGradientBoosting, XGBoost, and a Voting Ensemble
+
+Uses stratified 5-fold cross-validation
+
+Includes SMOTE oversampling and synthetic generation with TVAE/CTGAN
+
+Adds fold-specific cluster features
+
+
+Evaluation:
+
+-Saves confusion matrices, classification reports, and feature importances
+
+Saves Skill Translation Index (STI) probabilities
+
+Produces summary barplots of model accuracies
+
 All outputs are written to the results folder.
 
 Outputs:
