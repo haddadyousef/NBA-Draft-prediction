@@ -4,6 +4,7 @@ from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKF
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier, StackingClassifier, VotingClassifier
 from sklearn.cluster import KMeans
+from scipy.stats import f_oneway, chi2_contingency
 from sklearn.manifold import TSNE
 from sklearn.metrics import confusion_matrix
 from sklearn.utils.class_weight import compute_class_weight
@@ -11,15 +12,19 @@ from sdv.single_table import CTGANSynthesizer
 from sdv.single_table import TVAESynthesizer
 from sdv.metadata import SingleTableMetadata
 from sklearn.neighbors import NearestNeighbors
+import multiprocessing
 import umap
 from skimage.draw import disk
 from sklearn.decomposition import PCA
 import xgboost as xgb
 from sklearn.metrics import classification_report, accuracy_score, precision_recall_fscore_support
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
 from tensorflow.keras import layers, models, utils
+import tensorflow as tf
 import warnings
 warnings.filterwarnings('ignore')
 from sklearn.linear_model import LogisticRegression
@@ -35,9 +40,14 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
+import warnings
+warnings.filterwarnings("ignore", message="resource_tracker")
 
 # Define a global output folder
 OUTPUT_FOLDER = 'final_runthru_SSAC'
+n_cores = multiprocessing.cpu_count() // 2
+tf.config.threading.set_intra_op_parallelism_threads(n_cores)
+tf.config.threading.set_inter_op_parallelism_threads(n_cores)
 STAT_TEST_FOLDER = os.path.join(OUTPUT_FOLDER, 'statistical_tests')
 os.makedirs(STAT_TEST_FOLDER, exist_ok=True)
 
@@ -207,7 +217,7 @@ def save_skill_statistical_tables(
         mpl_table.set_fontsize(10)
         mpl_table.scale(1.1, 1.1)
 
-        # Style: highlight the top corr feat and its binaries
+        
         for key, cell in mpl_table.get_celld().items():
             if key[0] == 0:
                 cell.set_fontsize(12)
@@ -216,7 +226,7 @@ def save_skill_statistical_tables(
             elif key[0] > 0:
                 feat_name = table_rows[key[0]-1][0]
                 if feat_name in highlight_set:
-                    cell.set_facecolor('#ffeb99')  # highlight color
+                    cell.set_facecolor('#ffeb99') 
                 elif key[1] == 0:  # Feature name column
                     cell.set_text_props(weight='bold')
         
@@ -270,7 +280,7 @@ def save_overall_statistical_summary_table(
         data.append(row)
     table = pd.DataFrame(data, columns=columns, index=all_features)
     
-    # Identify binary features for highlighting (optional: bold them)
+    # Identify binary features for highlighting 
     highlight_features = []
     for skill in skills:
         # Find highest correlated feature
@@ -326,7 +336,7 @@ def save_overall_statistical_summary_table(
         elif key[1] == 0:  # feature column
             cell.set_fontsize(10)
             cell.set_text_props(weight='bold')
-        # Optionally: highlight the binary features for each skill
+        
         elif display_table[key[0]-1][0] in highlight_features:
             cell.set_facecolor('#ffe599')
     
@@ -403,7 +413,7 @@ def add_clustering_features(df, n_clusters=5, random_state=42):
         'USG%',  # Usage
         'STL',  
         'FTA', 
-        'WS' # Steals (perimeter defense)
+        'WS' 
     ]
 
     # Use only features present in the dataframe
@@ -856,10 +866,10 @@ def train_and_evaluate_models(X_train, X_test, y_train, y_test, category, class_
         sample_weights = y_train.map(class_weight_dict) if hasattr(y_train, 'map') else np.array([class_weight_dict[yy] for yy in y_train])
 
         if model_name in ['hist_gb', 'xgb']:
-            grid_search = GridSearchCV(model, param_grid[model_name], cv=3, n_jobs=-1, scoring='accuracy')
+            grid_search = GridSearchCV(model, param_grid[model_name], cv=3, n_jobs=n_cores, scoring='accuracy')
             grid_search.fit(X_train, y_train, sample_weight=sample_weights)
         else:
-            grid_search = GridSearchCV(model, param_grid[model_name], cv=3, n_jobs=-1, scoring='accuracy')
+            grid_search = GridSearchCV(model, param_grid[model_name], cv=3, n_jobs=n_cores, scoring='accuracy')
             grid_search.fit(X_train, y_train)
         best_model = grid_search.best_estimator_
         
@@ -889,8 +899,8 @@ def train_and_evaluate_models(X_train, X_test, y_train, y_test, category, class_
             feature_importances = perm_importance.importances_mean
 
         # Define output folder for this model
-        folder_path = os.path.join('new_methods_predictions', category, model_name)
-
+        folder_path = os.path.join(OUTPUT_FOLDER,OUTPUT_FOLDER,'new_methods_predictions',category,model_name)
+        os.makedirs(folder_path, exist_ok=True) 
         # --- Save STI probabilities as CSV ---
         if hasattr(best_model, 'predict_proba'):
             proba = best_model.predict_proba(X_test)
@@ -950,8 +960,10 @@ def train_and_evaluate_models(X_train, X_test, y_train, y_test, category, class_
     }
     
     # Save results for voting model
-    folder_path = os.path.join('new_methods_predictions', category, 'voting')
+    folder_path = os.path.join(OUTPUT_FOLDER,OUTPUT_FOLDER,'new_methods_predictions',category,model_name)
+    os.makedirs(folder_path, exist_ok=True) 
     save_results(category, 'voting', y_test, y_pred, None, accuracy, folder_path, X_train.columns.tolist())
+
     
     return results
 
@@ -1038,7 +1050,7 @@ def train_category_model(category_name, features, data, cluster_descriptions):
                 X_train_scaled, 
                 features=X_train_scaled.columns.tolist(),
                 cluster_col='player_cluster',
-                synth_frac=0.25,  # => 25% extra samples
+                synth_frac=0.75,  # => 25% extra samples
                 method='tvae'
             )
             # y_train unchanged, only features grow
@@ -1056,7 +1068,7 @@ def train_category_model(category_name, features, data, cluster_descriptions):
         smote = SMOTE(random_state=42)
         X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
 
-        # --- Apply synthetic augmentation for Trees + GNN (shared) ---
+        # --- Apply synthetic augmentation for Trees ---
         features_list = X_train_res.columns.tolist()
         X_aug, y_aug = augment_with_synthetic_for_all(X_train_res, y_train_res, features_list)
 
@@ -1100,7 +1112,7 @@ def train_category_model(category_name, features, data, cluster_descriptions):
         ])
 
     test_results = {"information_gain": avg_info_gain}
-    # You can expand to average ANOVA/chi² if needed
+    
 
     # ----- Report cluster distributions -----
     print("\nCluster Distribution across Categories:")
@@ -1124,7 +1136,7 @@ def prepare_data():
     
     college_stats = college_stats.fillna(0)
 
-    # --- Add: One-hot encode LastConf, keep YearsPlayed as numeric ---
+
     if 'LastConf' in college_stats.columns:
         conf_dummies = pd.get_dummies(college_stats['LastConf'], prefix='Conf')
         college_stats = pd.concat([college_stats, conf_dummies], axis=1)
@@ -1260,36 +1272,7 @@ def tabular_to_images(df, features, method='umap', img_size=32):
     images = np.stack(images)
     return images, feature_map
 
-def train_cnn(images, labels, num_classes, epochs=20):
-    images = images[..., np.newaxis]
-    labels_cat = utils.to_categorical(labels, num_classes)
-    
-    # Compute class weights
-    class_weights = compute_class_weight('balanced', classes=np.unique(labels), y=labels)
-    class_weight_dict = dict(enumerate(class_weights))
-    
-    model = models.Sequential([
-        layers.Conv2D(32, (3,3), activation='relu', input_shape=images.shape[1:]),
-        layers.MaxPooling2D(2),
-        layers.Conv2D(64, (3,3), activation='relu'),
-        # REMOVE the second MaxPooling2D
-        layers.Flatten(),
-        layers.Dense(64, activation='relu'),
-        layers.Dropout(0.25),
-        layers.Dense(num_classes, activation='softmax')
-    ])
-    es = EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True)
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-    model.fit(
-    images, labels_cat,
-    epochs=80,
-    batch_size=32,
-    validation_split=0.2,
-    class_weight=class_weight_dict,
-    callbacks=[es]
-    )
 
-    return model
 
 def process_all_categories(data, cluster_descriptions, binary_features_by_skill):
     """
@@ -1343,9 +1326,8 @@ def process_all_categories(data, cluster_descriptions, binary_features_by_skill)
             'cluster_descriptions': cluster_descriptions
         }
 
-        model_filename = os.path.join(
-            OUTPUT_FOLDER, f'{category.lower()}_best_model_with_clusters.joblib'
-        )
+        model_filename = os.path.join(OUTPUT_FOLDER,OUTPUT_FOLDER,'new_methods_predictions',category,'best_model.joblib')
+        os.makedirs(os.path.dirname(model_filename), exist_ok=True)
         joblib.dump(model_data, model_filename)
         print(f"\nModel saved as {model_filename}")
 
@@ -1408,6 +1390,7 @@ def save_summary_barplot(all_results, output_path):
 
     # Save
     plt.tight_layout()
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=300)
     plt.close()
     print(f"Saved summary barplot to {output_path}")
@@ -1475,71 +1458,7 @@ def build_graph_dataset(X, y, k_neighbors=5):
     
     data = Data(x=x_tensor, edge_index=edge_index, y=y_tensor)
     return data
-# --- Step 2. Define a simple GCN model ---
-class PlayerGCN(nn.Module):
-    def __init__(self, in_channels, hidden_channels, num_classes, dropout=0.3):
-        super(PlayerGCN, self).__init__()
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        self.lin = nn.Linear(hidden_channels, num_classes)
-        self.dropout = dropout
 
-    def forward(self, data):
-        x, edge_index = data.x, data.edge_index
-        x = F.relu(self.conv1(x, edge_index))
-        x = F.dropout(x, p=self.dropout, training=self.training)
-        x = F.relu(self.conv2(x, edge_index))
-        x = self.lin(x)
-        return x
-
-# --- Step 3. Train and evaluate GNN ---
-def train_gnn_model(X_train, X_test, y_train, y_test, class_weight_dict=None, epochs=1000, lr=0.01):
-    # Build graphs
-    train_graph = build_graph_dataset(X_train, y_train)
-    test_graph = build_graph_dataset(X_test, y_test)
-
-    model = PlayerGCN(in_channels=X_train.shape[1], hidden_channels=64, num_classes=len(set(y_train)))
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
-
-    if class_weight_dict:
-        weight_list = [class_weight_dict[c] for c in sorted(class_weight_dict.keys())]
-        criterion = nn.CrossEntropyLoss(weight=torch.tensor(weight_list, dtype=torch.float))
-    else:
-        criterion = nn.CrossEntropyLoss()
-
-    for epoch in range(epochs):
-        model.train()
-        optimizer.zero_grad()
-        out = model(train_graph)
-        loss = criterion(out, train_graph.y)
-        loss.backward()
-        optimizer.step()
-
-        if epoch % 20 == 0:
-            # Train accuracy
-            preds_train = out.argmax(dim=1).detach().cpu().numpy()
-            acc_train = accuracy_score(train_graph.y.cpu().numpy(), preds_train)
-
-            # Test accuracy
-            model.eval()
-            with torch.no_grad():
-                out_test = model(test_graph)
-                preds_test = out_test.argmax(dim=1).cpu().numpy()
-                acc_test = accuracy_score(y_test, preds_test)
-            print(f"[Epoch {epoch}] Loss: {loss.item():.4f}, Train Acc: {acc_train:.3f}, Test Acc: {acc_test:.3f}")
-
-    # Final evaluation
-    model.eval()
-    with torch.no_grad():
-        logits = model(test_graph)
-        preds = logits.argmax(dim=1).cpu().numpy()
-
-    acc = accuracy_score(y_test, preds)
-    print("\nFinal GNN Classification Report:")
-    print(classification_report(y_test, preds, target_names=['Bottom 25%', 'Middle 50%', 'Top 25%']))
-    print(f"GNN Accuracy: {acc:.3f}")
-
-    return model, preds, acc
 
 def generate_synthetic_top_class(X_train, y_train, features, top_class=2, n_synth=200, method='tvae'):
     """Generate synthetic samples for Top 25% class only, using training fold data."""
@@ -1596,15 +1515,12 @@ def augment_and_train_with_synthetic(X_train, y_train, X_test, y_test, class_wei
     print(f"Synthetic augmentation: added {(len(X_aug) - len(X_train))} samples "
           f"({len(X_mid) if X_mid is not None else 0} mid, {len(X_top) if X_top is not None else 0} top).")
 
-    # ---- Train GNN with synthetic-augmented data ----
-    print("\nTraining GNN (1000 epochs)...")
-    gnn_model, gnn_preds, gnn_acc = train_gnn_model(X_aug, X_test, y_aug, y_test, class_weight_dict, epochs=1000)
 
     # ---- Train Decision Trees on real data ----
     print("\nTraining Decision Tree Ensemble on real data...")
     tree_results = train_and_evaluate_models(X_train, X_test, y_train, y_test, "Trees", class_weight_dict)
 
-    return tree_results, gnn_model, gnn_preds, gnn_acc
+    return tree_results
 
 def augment_with_synthetic_for_all(X_train, y_train, features, n_mid=50, n_top=1200):
     """Generate synthetic samples for Mid (class=1) and Top (class=2) categories 
@@ -1628,7 +1544,7 @@ def augment_with_synthetic_for_all(X_train, y_train, features, n_mid=50, n_top=1
         X_aug = pd.concat([X_aug, pd.DataFrame(X_top, columns=features)], ignore_index=True)
         y_aug = pd.concat([y_aug, pd.Series(y_top)], ignore_index=True)
 
-    print(f"Synthetic augmentation added for Trees+GNN: "
+    print(f"Synthetic augmentation added for Trees: "
           f"{(len(X_aug) - len(X_train))} samples "
           f"({n_mid if X_mid is not None else 0} mid, {n_top if X_top is not None else 0} top).")
 
@@ -1655,17 +1571,12 @@ def generate_fold_synthetic(X_train, y_train, features, class_label, n_synth=100
     y_synth = synth['label'].values
     return X_synth, y_synth
 
-def augment_with_cluster_synthetic(X_train, features, cluster_col='player_cluster', synth_frac=0.25, method='tvae'):
+def augment_with_cluster_synthetic(X_train, features, cluster_col='player_cluster', synth_frac=0.75, method='tvae'):
     """
     Generate synthetic samples per cluster using TVAE/CTGAN.
     Adds ~synth_frac of the training set size back as synthetic data.
     
-    Args:
-        X_train (pd.DataFrame): training features including a `player_cluster` column.
-        features (list): features to synthesize.
-        cluster_col (str): column containing cluster assignment.
-        synth_frac (float): fraction of dataset size to generate (default 0.25 = 25% more data).
-        method (str): 'tvae' or 'ctgan'.
+
         
     Returns:
         X_aug (pd.DataFrame): augmented training features
@@ -1711,7 +1622,6 @@ def augment_with_cluster_synthetic(X_train, features, cluster_col='player_cluste
         X_aug = pd.concat([X_aug, synth_all], ignore_index=True)
 
     return X_aug
-
 if __name__ == "__main__":
     print("Starting basketball player analysis with clustering and early statistical tests...")
     print("=" * 80)
@@ -1742,6 +1652,14 @@ if __name__ == "__main__":
             'Shooter': ['Three_Point_Rate', 'Shot_Selection', 'Pure_Shooting'],
             'Scorer': ['Three_Point_Rate', 'Shot_Selection', 'Pure_Shooting']
         }
+
+        # 2. Run and save all statistical tests
+        merged_data, feat_results, binary_features_by_skill = run_and_save_stat_tests(
+            merged_data,
+            cluster_descriptions,
+            category_features,
+            engineered_feats
+        )
 
 
 
@@ -1781,4 +1699,3 @@ if __name__ == "__main__":
         print(f"Error during analysis: {str(e)}")
         traceback.print_exc()
 
-        
