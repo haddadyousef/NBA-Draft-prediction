@@ -32,7 +32,8 @@ NBA-Draft-prediction/
       
       player_clusters.png
    
-  
+   future runs will be saved to OUTPUT_FOLDER  
+
 
 
 Setup
