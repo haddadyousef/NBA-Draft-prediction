@@ -10,14 +10,29 @@ NBA-Draft-prediction/
    data/ – Input data (CSV files)
       college_stats_final.csv
       nba_player_ratings_25_99_newv2.csv
-   src/ – Source code
-      predict_success.py – Main analysis pipeline
+   predict_success.py – Main analysis pipeline
+
    
-   cluster_elbow_method.png
-   player_clusters.png
-   statistical_tests/...
-   new_methods_predictions/...
-   accuracy_summary_barplot.png
+   final_runthru_SSAC - Output Data
+      new_methods_predictions/ - model results
+      
+      statistical_tests/ - ANOVA, Chi-sq, correlation, and information gain tests for each skill
+      
+      final_runthru_SSAC/ - STI probabilities
+      
+         new_methods_predictions/(skill)/(model)
+         
+         sti_probabilities.csv - STI prediction probabilities for each class
+         
+      accuracy_summary_barplot.png
+      
+      cluster_elbow_method.png
+      
+      cluster_success_rates.png
+      
+      player_clusters.png
+   
+  
 
 
 Setup
