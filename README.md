@@ -37,6 +37,41 @@ NBA-Draft-prediction/
 
 
 Setup
+
+This project requires Python 3.12  
+
+It is recommended to use a virtual environment for isolation.
+
+1. Create a virtual environment
+
+
+From the project root:
+
+brew install python@3.12 for Mac or winget install Python.Python.3.12 for Windows
+
+python3.12 -m venv venv312
+
+2. Activate the environment
+
+macOS/Linux:
+
+source venv312/bin/activate
+
+venv312\Scripts\activate
+
+3. Install dependencies
+
+With the environment activated, run:
+
+
+pip install --upgrade pip
+
+
+pip install -r requirements.txt
+Once the environment is set up, you can run the pipeline with:
+
+python predict_success.py
+
 Clone the repository and install the dependencies:
 
 > git clone https://github.com/haddadyousef/NBA-Draft-prediction
@@ -53,7 +88,7 @@ Running the Pipeline
 
 To execute the full workflow, run:
 
-python src/predict_success.py
+predict_success.py
 
 The pipeline performs the following steps:
 
@@ -132,4 +167,4 @@ Key Findings
    
    Synthetic augmentation helps address class imbalance and improve predictions for rare Top 25% outcomes.
    
-   Voting ensembles consistently outperform single models across skill categories.
+
