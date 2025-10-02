@@ -44,7 +44,7 @@ import warnings
 warnings.filterwarnings("ignore", message="resource_tracker")
 
 # Define a global output folder
-OUTPUT_FOLDER = 'final_runthru_SSAC'
+OUTPUT_FOLDER = 'OUTPUT_FOLDER'
 n_cores = multiprocessing.cpu_count() // 2
 tf.config.threading.set_intra_op_parallelism_threads(n_cores)
 tf.config.threading.set_inter_op_parallelism_threads(n_cores)
@@ -1698,4 +1698,5 @@ if __name__ == "__main__":
         import traceback
         print(f"Error during analysis: {str(e)}")
         traceback.print_exc()
+
 
