@@ -18,11 +18,11 @@ NBA-Draft-prediction/
       
       statistical_tests/ - ANOVA, Chi-sq, correlation, and information gain tests for each skill
       
-      final_runthru_SSAC/ - STI probabilities
+      final_runthru_SSAC/ - SVI probabilities
       
          new_methods_predictions/(skill)/(model)
          
-         sti_probabilities.csv - STI prediction probabilities for each class
+         sti_probabilities.csv - SVI prediction probabilities for each class
          
       accuracy_summary_barplot.png
       
@@ -153,7 +153,7 @@ Model evaluation
    Confusion matrices (PNG)
    Classification reports (PNG and JSON)
    Feature importance plots and CSV tables
-   STI probabilities CSVs
+   SVI probabilities CSVs
    Overall results
    
    accuracy_summary_barplot.png: grouped bar chart comparing model accuracies
